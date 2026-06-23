@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=World Cup Scores
+Comment=Always-on-top World Cup score widget
+Exec=/home/yo/Projects/footywidget-linux/launch-worldcup-widget.sh
+Terminal=false
+Categories=Utility;
