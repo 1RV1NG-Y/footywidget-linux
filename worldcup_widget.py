@@ -463,9 +463,10 @@ class Widget(tk.Tk):
     def _fetch_worker(self, fetch_date: date) -> None:
         try:
             matches = get_worldcup_matches(fetch_date)
-            self.after(0, lambda: self._finish_refresh(fetch_date, matches, ""))
+            self.after(0, lambda items=matches: self._finish_refresh(fetch_date, items, ""))
         except Exception as exc:
-            self.after(0, lambda: self._finish_refresh(fetch_date, [], str(exc)))
+            error = str(exc)
+            self.after(0, lambda message=error: self._finish_refresh(fetch_date, [], message))
 
     def _finish_refresh(self, fetch_date: date, matches: list[Match], error: str) -> None:
         if fetch_date != self.selected_date:
