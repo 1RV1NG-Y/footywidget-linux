@@ -163,21 +163,29 @@ def _fetch_json(url: str) -> dict[str, Any]:
 
 def get_worldcup_matches(match_date: date, leagues: tuple[str, ...] = LEAGUES) -> list[Match]:
     events_by_id: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    successful_fetches = 0
 
     for league in leagues:
-        for offset in (-1, 0, 1):
+        for offset in (0, -1, 1):
             query_date = match_date + timedelta(days=offset)
             params = urllib.parse.urlencode({"dates": _date_token(query_date)})
             url = f"{API.format(league=league)}?{params}"
             try:
                 data = _fetch_json(url)
             except Exception as exc:
-                raise RuntimeError(f"Could not reach ESPN for {_date_token(query_date)}. {exc}") from exc
+                errors.append(f"{_date_token(query_date)}: {exc}")
+                continue
 
+            successful_fetches += 1
             for event in data.get("events") or []:
                 event_id = str(event.get("id") or "")
                 if event_id and event_id not in events_by_id:
                     events_by_id[event_id] = event
+
+    if successful_fetches == 0 and errors:
+        extra = "" if len(errors) == 1 else f" ({len(errors) - 1} more failures)"
+        raise RuntimeError(f"Could not reach ESPN. {errors[0]}{extra}")
 
     matches: list[Match] = []
     for event in events_by_id.values():
@@ -324,6 +332,8 @@ class Widget(tk.Tk):
         self._window_start: tuple[int, int] | None = None
         self._refresh_after_id: str | None = None
         self._scrollable = False
+        self._rendered_date: date | None = None
+        self._rendered_matches: list[Match] = []
 
         self._build_layout()
         self._resize_for_count(1)
@@ -475,11 +485,18 @@ class Widget(tk.Tk):
             return
 
         if error:
-            self._render([], error)
-            plan = get_refresh_plan([], had_error=True)
+            if self._rendered_date == fetch_date:
+                plan = get_refresh_plan(self._rendered_matches)
+                if not plan.enabled:
+                    plan = get_refresh_plan([], had_error=True)
+            else:
+                self._render([], error)
+                plan = get_refresh_plan([], had_error=True)
             self.status_var.set(f"Load failed - {plan.label}")
         else:
             self._render(matches)
+            self._rendered_date = fetch_date
+            self._rendered_matches = matches
             plan = get_refresh_plan(matches)
             self.status_var.set(f"Updated {datetime.now():%H:%M:%S} - {plan.label}")
 
@@ -706,7 +723,10 @@ def main() -> int:
         widget.destroy()
         return 0
 
-    Widget(selected_date=args.date).mainloop()
+    try:
+        Widget(selected_date=args.date).mainloop()
+    except KeyboardInterrupt:
+        return 130
     return 0
 
 
