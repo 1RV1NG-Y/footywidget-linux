@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import threading
 import urllib.parse
 import urllib.request
@@ -24,6 +25,9 @@ LEAGUES = ("fifa.world",)
 POLL_SECONDS = 30
 PRE_MATCH_REFRESH_MINUTES = 15
 ERROR_RETRY_SECONDS = 300
+FETCH_TIMEOUT_SECONDS = 10
+FETCH_ATTEMPTS = 2
+FETCH_RETRY_DELAY_SECONDS = 1.0
 
 WIDTH = 430
 HEADER_HEIGHT = 52
@@ -155,10 +159,36 @@ def _date_token(day: date) -> str:
     return day.strftime("%Y%m%d")
 
 
-def _fetch_json(url: str) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(request, timeout=12) as response:
-        return json.load(response)
+def _fetch_json(url: str, attempts: int = FETCH_ATTEMPTS) -> dict[str, Any]:
+    last_error: Exception | None = None
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+        "Connection": "close",
+    }
+
+    for attempt in range(1, attempts + 1):
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
+                return json.load(response)
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts:
+                time.sleep(FETCH_RETRY_DELAY_SECONDS * attempt)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("request failed")
+
+
+def _display_error(error: str) -> str:
+    lower = error.lower()
+    if "handshake operation timed out" in lower or "timed out" in lower:
+        return "ESPN connection timed out"
+    if "name resolution" in lower or "no address associated" in lower:
+        return "Network DNS error"
+    return "Could not reach ESPN"
 
 
 def get_worldcup_matches(match_date: date, leagues: tuple[str, ...] = LEAGUES) -> list[Match]:
@@ -171,8 +201,9 @@ def get_worldcup_matches(match_date: date, leagues: tuple[str, ...] = LEAGUES) -
             query_date = match_date + timedelta(days=offset)
             params = urllib.parse.urlencode({"dates": _date_token(query_date)})
             url = f"{API.format(league=league)}?{params}"
+            attempts = FETCH_ATTEMPTS if offset == 0 else 1
             try:
-                data = _fetch_json(url)
+                data = _fetch_json(url, attempts=attempts)
             except Exception as exc:
                 errors.append(f"{_date_token(query_date)}: {exc}")
                 continue
@@ -490,7 +521,7 @@ class Widget(tk.Tk):
                 if not plan.enabled:
                     plan = get_refresh_plan([], had_error=True)
             else:
-                self._render([], error)
+                self._render([], _display_error(error))
                 plan = get_refresh_plan([], had_error=True)
             self.status_var.set(f"Load failed - {plan.label}")
         else:
